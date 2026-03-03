@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>اختبار الاتصال Supabase</title>
+<title>Test Supabase</title>
 </head>
 <body>
 <h2>اختبار الاتصال بـ Supabase</h2>
@@ -15,16 +15,15 @@ const SUPABASE_URL = "https://aeuprfdpiumdhuceuklj.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_CpkeH3iIXirmlRg8CtzX4Q_RQ97jDdq";
 const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const statusEl = document.getElementById("status");
-
 (async () => {
+    const statusEl = document.getElementById("status");
     try {
-        // فقط اختبار الوصول للـ Bucket
-        const { data, error } = await supabase.storage.from("videos").list({ limit:1 });
+        // نجرب ping بسيط باستخدام وظيفة auth.getUser
+        const { data, error } = await supabase.auth.getUser();
         if(error) throw error;
-        statusEl.innerText = "✅ الاتصال ناجح! يمكن الوصول إلى الـ Bucket.";
-        console.log("Connection successful:", data);
-    } catch(e) {
+        statusEl.innerText = "✅ الاتصال ناجح!";
+        console.log("Supabase response:", data);
+    } catch(e){
         statusEl.innerText = "❌ فشل الاتصال: " + e.message;
         console.error("Connection error:", e);
     }
